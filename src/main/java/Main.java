@@ -255,7 +255,7 @@ public class Main {
                 driver.findElement(by).isDisplayed();
                 return true;
             } catch (Exception e) {
-                Thread.sleep(50);
+                Thread.sleep(30);
             }
         }
         return false;
