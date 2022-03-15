@@ -9,19 +9,23 @@ import org.openqa.selenium.support.ui.WebDriverWait;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.sql.Timestamp;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.Duration;
 import java.util.*;
 
 public class Main {
+    static String mainVillage;
     static int mainVillageX;
     static int mainVillageY;
-    static int maxDistance = 1;
+    static int maxDistance = 2;
     static List<Oasis> oasisList = new ArrayList<>();
     static List<Oasis> optimalOasisList = new ArrayList<>();
-    static List<Oasis> hardOasisList = new ArrayList<>();
+    static List<Oasis> badOasisList = new ArrayList<>();
     static WebDriver driver = getWebDriver();
     static Properties prop;
+
     static {
         try {
             prop = getConfig();
@@ -29,47 +33,57 @@ public class Main {
             e.printStackTrace();
         }
     }
+
     static int arrivalTime = 0;
 
     public static void main(String[] args) throws InterruptedException {
-        System.out.println("Starting Otravianator...");
+        log("Starting Otravianator...");
         login();
+        checkHeroHPAndHeal();
+        getActualVillage();
         scanWholeMap();
-        while(true) {
-            if (isHeroHome()) {
-                if (!optimalOasisList.isEmpty()) {
-//                    Oasis oasis = optimalOasisList.remove(0);
-                    Iterator<Oasis> iterator = optimalOasisList.iterator();
-                    Oasis oasis = iterator.next();
-                    checkHeroHPAndHeal();
-                    goToMap();
-                    setCoordinates(oasis.x, oasis.y);
-                    resolveCell(oasis.x, oasis.y);
-                    iterator.remove();
-                } else {
-//                    scanOnlyOasis();
-//                    if (!optimalOasisList.isEmpty()) {
-                        maxDistance++;
-                        System.out.println("maxDistance increased to " + maxDistance);
+        while (true) {
+            try {
+                if (isHeroHome()) {
+                    if (!optimalOasisList.isEmpty()) {
+                        Iterator<Oasis> iterator = optimalOasisList.iterator();
+                        Oasis oasis = iterator.next();
+                        checkHeroHPAndHeal();
+                        goToMap();
+                        setCoordinates(oasis.x, oasis.y);
+                        resolveCell(oasis.x, oasis.y);
+                        iterator.remove();
+                        logE("[optimalOasisList after remove]: " + optimalOasisList.toString());
+                    } else {
+                        maxDistance = maxDistance >= 7 ? 1 : maxDistance + 1;
+                        logE("maxDistance changed to " + maxDistance);
                         oasisList.clear();
+                        badOasisList.clear();
                         scanWholeMap();
-//                    }
+                        logE("[optimalOasisList after scan]: " + optimalOasisList.toString());
+                    }
+                } else {
+                    log("Sleeping some seconds.");
+                    Thread.sleep(maxDistance * 10846L);
+                    driver.navigate().refresh();
                 }
-            } else {
-                System.out.println("Sleeping some seconds.");
-                Thread.sleep(38984);
-                driver.navigate().refresh();
+            } catch (Exception e) {
+                if (isDisplayed(By.xpath("//div[.='Maintenance']"))) {
+                    logE("Maintenance - Sleeping some seconds.");
+                    Thread.sleep(10846);
+                    driver.navigate().refresh();
+                } else {
+                    throw e;
+                }
             }
         }
     }
 
     private static void scanWholeMap() throws InterruptedException {
-        System.out.println("Scanning whole map.");
-        int mainVillageX = Integer.parseInt(prop.getProperty("mainVillageX"));
-        int mainVillageY = Integer.parseInt(prop.getProperty("mainVillageY"));
+        log("Scanning whole map.");
         goToMap();
-        for (int x = mainVillageX-maxDistance; x <= mainVillageX+maxDistance; x++) {
-            for (int y = mainVillageY-maxDistance; y <= mainVillageY+maxDistance; y++) {
+        for (int x = mainVillageX - maxDistance; x <= mainVillageX + maxDistance; x++) {
+            for (int y = mainVillageY - maxDistance; y <= mainVillageY + maxDistance; y++) {
                 setCoordinates(x, y);
                 resolveCell(x, y);
             }
@@ -77,7 +91,7 @@ public class Main {
     }
 
     private static void scanOnlyOasis() throws InterruptedException {
-        System.out.println("Scanning oasis only.");
+        log("Scanning oasis only.");
         goToMap();
         for (Oasis oasis : oasisList) {
             setCoordinates(oasis.x, oasis.y);
@@ -85,23 +99,71 @@ public class Main {
         }
     }
 
+    private static void getActualVillage() throws InterruptedException {
+        goToHeroSummary();
+        mainVillage = driver.findElement(By.xpath("//*[contains(@class, 'heroStatusMessage')]/span/a")).getText();
+        String rawX = driver.findElement(By.xpath("//div[contains(@class, 'listEntry')]//span[.='" + mainVillage + "']/../../..//span[@class='coordinateX']")).getText();
+        String rawY = driver.findElement(By.xpath("//div[contains(@class, 'listEntry')]//span[.='" + mainVillage + "']/../../..//span[@class='coordinateY']")).getText();
+        mainVillageX = parseCoordinateInteger(rawX);
+        mainVillageY = parseCoordinateInteger(rawY);
+    }
+
+    private static int parseCoordinateInteger(String raw) {
+        String result = raw
+                .replaceAll("\u202D", "")
+                .replaceAll("\u202C", "")
+                .replace("(", "")
+                .replace(")", "")
+                .replace("−", "-");
+        return Integer.parseInt(result);
+    }
+
+    private static void goToMap() throws InterruptedException {
+        log("Going to map.");
+        waitForElement(By.xpath("//a[@class='map']"), 5);
+        driver.findElement(By.xpath("//a[@class='map']")).click();
+        waitForElement(By.xpath("//input[@id='xCoordInputMap']"), 5);
+    }
+
+    private static void goToHeroSummary() throws InterruptedException {
+        log("Going to hero summary.");
+        waitForElement(By.id("heroImageButton"), 5);
+        driver.findElement(By.id("heroImageButton")).click();
+        waitForElement(By.xpath("//*[@class='heroStatusMessage ']"), 5);
+    }
+
+    private static void setCoordinates(int x, int y) throws InterruptedException {
+        log("Setting coordinates [" + x + " | " + y + "]");
+        driver.findElement(By.xpath("//input[@id='xCoordInputMap']")).clear();
+        driver.findElement(By.xpath("//input[@id='xCoordInputMap']")).sendKeys(Integer.toString(x));
+        driver.findElement(By.xpath("//input[@id='yCoordInputMap']")).clear();
+        driver.findElement(By.xpath("//input[@id='yCoordInputMap']")).sendKeys(Integer.toString(y));
+        driver.findElement(By.xpath("//button[@value='OK']")).click();
+        Thread.sleep(500);
+    }
+
     private static void resolveCell(int x, int y) throws InterruptedException {
-        System.out.println("Resolving cell [" + x + " | " + y + "]");
-        waitForElement(By.xpath("//div[contains(@style, 'overflow: hidden; position: absolute;')]"), 5000);
+        log("Resolving cell [" + x + " | " + y + "]");
+        waitForElement(By.xpath("//div[contains(@style, 'overflow: hidden; position: absolute;')]"), 5);
         driver.findElement(By.xpath("//div[contains(@style, 'overflow: hidden; position: absolute;')]")).click();
-        waitForElement(By.xpath("//div[contains(@class, 'dialogCancelButton')]"), 5000);
-        if (isDisplayed(By.xpath("//h1[contains(., 'voln')]"))) {
+//        if (!isDisplayed(By.xpath("//div[contains(@class, 'dialogCancelButton')]"))) {
+//            waitForElement(By.xpath("//div[contains(@style, 'overflow: hidden; position: absolute;')]"), 5000);
+//            driver.findElement(By.xpath("//div[contains(@style, 'overflow: hidden; position: absolute;')]")).click();
+//        }
+        waitForElement(By.xpath("//a[.='Vycentrovat mapu']"), 30000);
+        String title = driver.findElement(By.xpath("//h1[@class='titleInHeader']")).getText();
+        if (title.contains("voln")) {
             saveOasis(x, y);
             if (!isDisplayed(By.xpath("//table[@id='troop_info']//td[.='žádné']"))) {
                 if (isHeroHome() && isOptimalStrength()) {
-                    attackOasis(x,y);
+                    attackOasis(x, y);
                     goToMap();
                     return;
                 } else {
                     if (isOptimalStrength()) {
                         saveOptimalOasis(x, y);
                     } else {
-                        saveHardOasis(x, y);
+                        saveBadOasis(x, y);
                     }
 
                     closeModal();
@@ -114,99 +176,98 @@ public class Main {
         }
     }
 
-    private static void setCoordinates(int x, int y) {
-        System.out.println("Setting coordinates [" + x + " | " + y + "]");
-        driver.findElement(By.xpath("//input[@id='xCoordInputMap']")).clear();
-        driver.findElement(By.xpath("//input[@id='xCoordInputMap']")).sendKeys(Integer.toString(x));
-        driver.findElement(By.xpath("//input[@id='yCoordInputMap']")).clear();
-        driver.findElement(By.xpath("//input[@id='yCoordInputMap']")).sendKeys(Integer.toString(y));
-        driver.findElement(By.xpath("//button[@value='OK']")).click();
-    }
-
-    private static void goToMap() throws InterruptedException {
-        System.out.println("Going to map.");
-        waitForElement(By.xpath("//a[@class='map']"), 5000);
-        driver.findElement(By.xpath("//a[@class='map']")).click();
-        waitForElement(By.xpath("//input[@id='xCoordInputMap']"), 5000);
-    }
-
     private static void closeModal() {
-        System.out.println("Closing modal: " + driver.findElement(By.xpath("//h1[@class='titleInHeader']")).getText());
+        log("Closing modal: " + driver.findElement(By.xpath("//h1[@class='titleInHeader']")).getText());
         driver.findElement(By.xpath("//div[contains(@class, 'dialogCancelButton')]")).click();
     }
 
     private static void saveOasis(int x, int y) {
         oasisList.add(new Oasis(x, y));
-        System.out.println("[oasisList]: " + oasisList.toString());
+        log("[oasisList]: " + oasisList.toString());
     }
 
     private static void saveOptimalOasis(int x, int y) {
         optimalOasisList.add(new Oasis(x, y));
-        System.out.println("[optimalOasisList]: " + optimalOasisList.toString());
+        logE("[optimalOasisList]: " + optimalOasisList.toString());
     }
 
-    private static void saveHardOasis(int x, int y) {
-        hardOasisList.add(new Oasis(x, y));
-        System.out.println("[hardOasisList]: " + hardOasisList.toString());
+    private static void saveBadOasis(int x, int y) {
+        badOasisList.add(new Oasis(x, y));
+        log("[badOasisList]: " + badOasisList.toString());
     }
 
     private static boolean isHeroHome() {
         boolean isHeroHome = !exists(By.xpath("//*[@class='heroRunning']"));
-        System.out.println("Hero home: " + isHeroHome);
+        log("Hero home: " + isHeroHome);
         return isHeroHome;
     }
 
     private static void checkHeroHPAndHeal() throws InterruptedException {
-        System.out.println("Checking hero's HP.");
-        driver.findElement(By.id("heroImageButton")).click();
+        log("Checking hero's HP.");
+        goToHeroSummary();
         String origHp = driver.findElement(By.xpath("//tr[@class='attribute health tooltip']/td[2]/span")).getText();
         int hp = Integer.parseInt(origHp.replace("‭‭", "").replace("\u202C%\u202C", ""));
         if (hp < 40) {
-            System.out.println("Hero under 40%, getting exps.");
-            List<WebElement> villageList = driver.findElements(By.xpath("//*[contains(@class, 'listEntry')]"));
-            for (WebElement village: villageList) {
-                village.click();
+            log("Hero have " + hp + "%, getting exps.");
+            waitForElement(By.xpath("//*[contains(@class, 'listEntry')]"), 5);
+            List<WebElement> villageList = driver.findElements(By.xpath("//*[contains(@class, 'listEntry')]/a"));
+            for (int i = 0; i < villageList.size(); i++) {
+                Thread.sleep(2000);
+                driver.findElement(By.xpath("//*[contains(@class, 'villageList')]/*[" + (i + 1) + "]")).click();
                 driver.findElement(By.id("questmasterButton")).click();
+                Thread.sleep(2000);
                 List<WebElement> xpList = driver.findElements(By.xpath("//button/div[.='Vyzvednout']"));
-                for (WebElement xp: xpList) {
-                    xp.click();
+                for (int j = 0; j < xpList.size(); j++) {
+                    driver.findElement(By.xpath("//button/div[.='Vyzvednout'][" + (i + 1) + "]")).click();
                     Thread.sleep(2000);
                 }
             }
         }
         if (hp < 40) {
-            System.out.println("Hero still under 40%, healing 20.");
+            log("Hero have " + hp + "%, healing.");
+            goToHeroSummary();
             driver.findElement(By.id("item_120031")).click();
+            waitForElement(By.xpath("//div[@id='dialogContent']/input[@id='amount']"), 5);
+            driver.findElement(By.xpath("//div[@id='dialogContent']/input[@id='amount']")).clear();
             driver.findElement(By.xpath("//div[@id='dialogContent']/input[@id='amount']")).sendKeys("20");
-            driver.findElement(By.xpath("//button[class='green dialogButtonOk ok textButtonV1']")).click();
+            driver.findElement(By.xpath("//button[.='OK']")).click();
+            Thread.sleep(5000);
         }
         if (hp < 40) {
-            System.out.println("Low health. Exiting...");
+            log("Low health. Exiting...");
             System.exit(0);
         }
     }
 
     private static void attackOasis(int x, int y) throws InterruptedException {
-        if (isHeroHome()){
-            System.out.println("Attacking oasis [" + x + "|" + y + "]");
+        if (isHeroHome()) {
+            log("Attacking oasis [" + x + "|" + y + "]");
             //get and find
             driver.findElement(By.xpath("//a[.='Prozkoumat volnou oázu']")).click();
-            if (!isDisplayed(By.xpath("//img[@alt='Theutates Blesk']/../span"))) {
-                driver.findElement(By.xpath("//img[@alt='Theutates Blesk']/../a")).click();
-                System.out.println("Adding " + driver.findElement(By.xpath("//img[@alt='Theutates Blesk']/../a")).getText() + "x Blesks");
+//            if (!isDisplayed(By.xpath("//img[@alt='Theutates Blesk']/../span"))) {
+//                driver.findElement(By.xpath("//img[@alt='Theutates Blesk']/../a")).click();
+//                log("Adding " + driver.findElement(By.xpath("//img[@alt='Theutates Blesk']/../a")).getText() + "x Blesks");
+//            }
+            if (!isDisplayed(By.xpath("//img[@alt='Hrdina']/../a"))) {
+                driver.findElement(By.xpath("//div[contains(@class, 'listEntry')]//span[.='" + mainVillage + "']")).click();
             }
-            if (isDisplayed(By.xpath("//img[@alt='Hrdina']/../a"))) {
-                driver.findElement(By.xpath("//img[@alt='Hrdina']/../a")).click();
-            }
+            driver.findElement(By.xpath("//img[@alt='Hrdina']/../a")).click();
             driver.findElement(By.xpath("//label[contains(., 'Útok: loupež')]")).click();
             driver.findElement(By.xpath("//button[contains(., 'Odeslat')]")).click();
 //        saveArrivalTime();
-            waitForElement(By.xpath("//button[contains(., 'Potvrdit')]"), 5000);
+            waitForElement(By.xpath("//button[contains(., 'Potvrdit')]"), 5);
             driver.findElement(By.xpath("//button[contains(., 'Potvrdit')]")).click();
-            System.err.println("CHAAAARGE!");
-            System.out.println("List of optimal oases is now: " + optimalOasisList.toString());
+            driver.findElement(By.xpath("//span[contains(@class,'coordinateX')][contains(.,'" + Math.abs(x) + "')]/../span[contains(@class,'coordinateY')][contains(.,'" + Math.abs(y) + "')]")).click();
+            driver.findElement(By.xpath("//a[.='Prozkoumat volnou oázu']")).click();
+            driver.findElement(By.xpath("//input[@name='troops[0][t4]']")).sendKeys("20");
+            driver.findElement(By.xpath("//label[contains(., 'Útok: loupež')]")).click();
+            driver.findElement(By.xpath("//button[contains(., 'Odeslat')]")).click();
+            waitForElement(By.xpath("//button[contains(., 'Potvrdit')]"), 5);
+            driver.findElement(By.xpath("//button[contains(., 'Potvrdit')]")).click();
+            logE("CHAAAARGE!");
+            logE("List of optimal oases is now: " + optimalOasisList.toString());
         } else {
-            System.err.println("Tried to attack, but hero is not home!");
+            logE("Tried to attack, but hero is not home!");
         }
     }
 
@@ -222,7 +283,7 @@ public class Main {
         }
         assert date != null;
         arrivalTime = (int) date.getTime();
-        System.out.println("Arrival time set to " + arrivalTime);
+        log("Arrival time set to " + arrivalTime);
     }
 
     private static boolean isOptimalStrength() {
@@ -235,8 +296,8 @@ public class Main {
             assert animal != null;
             totalStrength += count * animal.strength;
         }
-        System.out.println("Oasis total strength is " + totalStrength);
-        return totalStrength < Integer.parseInt(prop.getProperty("maxOasisStrength"));
+        log("Oasis total strength is " + totalStrength);
+        return 100 < totalStrength && totalStrength < Integer.parseInt(prop.getProperty("maxOasisStrength"));
     }
 
     private static void login() {
@@ -246,7 +307,7 @@ public class Main {
         driver.findElement(By.xpath("//input[@name='password']")).clear();
         driver.findElement(By.xpath("//input[@name='password']")).sendKeys(prop.getProperty("password"));
         driver.findElement(By.xpath("//button[@value='Login']")).click();
-        driver.findElement(By.xpath("//span[.='" + prop.getProperty("mainVillage") + "']")).click();
+        driver.findElement(By.xpath("//span[.='" + mainVillage + "']")).click();
     }
 
     public static boolean isDisplayed(By by) throws InterruptedException {
@@ -265,18 +326,19 @@ public class Main {
         return !driver.findElements(by).isEmpty();
     }
 
-    public static void waitForElement(WebElement element, int sleepTime) throws InterruptedException{
-        WebDriverWait wait = new WebDriverWait(driver, sleepTime);
+    public static void waitForElement(WebElement element, int sleepTime) {
+        WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(sleepTime));
         wait.until(ExpectedConditions.elementToBeClickable(element));
     }
 
-    public static void waitForElement(By by, int sleepTime) throws InterruptedException{
-        WebDriverWait wait = new WebDriverWait(driver, sleepTime);
+    public static void waitForElement(By by, int sleepTime) {
+        WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(sleepTime));
         wait.until(ExpectedConditions.elementToBeClickable(by));
     }
 
     private static WebDriver getWebDriver() {
-        WebDriverManager.chromedriver().browserVersion("77.0.3865.40").setup();
+        WebDriverManager.chromedriver().browserVersion("98.0.4758.102").setup();
+        WebDriverManager.chromedriver().driverVersion("98.0.4758.102").setup();
         ChromeOptions options = new ChromeOptions();
         options.addArguments("start-maximized");
         options.addArguments("enable-automation");
@@ -293,5 +355,13 @@ public class Main {
         InputStream input = Main.class.getClassLoader().getResourceAsStream("config.properties");
         prop.load(input);
         return prop;
+    }
+
+    private static void log(String text) {
+        System.out.println("[" + new Timestamp(System.currentTimeMillis()) + "]: " + text);
+    }
+
+    private static void logE(String text) {
+        System.err.println("[" + new Timestamp(System.currentTimeMillis()) + "]: " + text);
     }
 }
